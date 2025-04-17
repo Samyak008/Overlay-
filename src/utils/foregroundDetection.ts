@@ -1,3 +1,5 @@
+import { removeBackground } from '@imgly/background-removal';
+
 interface TextSettings {
   content: string;
   font: string;
@@ -9,136 +11,72 @@ interface TextSettings {
 
 interface DetectionResult {
   mask: Uint8ClampedArray;
+  foregroundUrl?: string;
 }
 
 /**
- * Detects the foreground of an image using edge detection and places text behind it
- * This is a frontend-only approach using canvas manipulation techniques
+ * Detects the foreground of an image using IMG.LY's background removal API
+ * and places text behind it.
  * 
- * @param canvas The canvas element to render to
- * @param image The source image
+ * @param image The source image (as HTMLImageElement, Blob, or File)
  * @param textSettings Settings for text rendering
- * @param returnMaskOnly If true, only generate the mask and don't render text (for optimization)
- * @param fastMode If true, use a faster but less accurate algorithm for mask generation
- * @returns An object containing the foreground mask if returnMaskOnly is true
+ * @param returnMaskOnly If true, only generate the mask without rendering text
+ * @param progressCallback Optional callback for tracking progress
+ * @returns Promise resolving to DetectionResult containing the foreground mask and URL
  */
-export function detectForeground(
-  canvas: HTMLCanvasElement,
-  image: HTMLImageElement,
-  textSettings: TextSettings,
+export async function detectForeground(
+  image: HTMLImageElement | string | Blob | File,
+  textSettings?: TextSettings,
   returnMaskOnly: boolean = false,
-  fastMode: boolean = false
-): DetectionResult | void {
-  // Safety check for canvas dimensions
-  if (canvas.width <= 0 || canvas.height <= 0) {
-    console.error('Invalid canvas dimensions:', canvas.width, canvas.height);
-    return { mask: new Uint8ClampedArray(0) };
-  }
-
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return { mask: new Uint8ClampedArray(0) };
-
+  progressCallback?: (progress: number) => void
+): Promise<DetectionResult> {
   try {
-    // Step 1: Draw the original image
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    // Process with IMG.LY background removal
+    const processingStartTime = performance.now();
+    console.log('Starting background removal...');
     
-    // Step 2: Get image data for processing
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    
-    // Skip processing if we have an empty image
-    if (data.length === 0) {
-      return { mask: new Uint8ClampedArray(0) };
-    }
-    
-    // Step 3: Apply edge detection based on mode
-    let mask: Uint8ClampedArray;
-    
-    if (fastMode) {
-      // Fast mode: Use simplified edge detection for better performance
-      mask = fastEdgeDetection(imageData);
-    } else {
-      // Standard mode: Use Sobel operator for better quality
-      const sobelData = applySobelOperator(imageData);
-      
-      // Create a mask for the foreground
-      const threshold = 50; // Adjust this threshold to control edge sensitivity
-      mask = new Uint8ClampedArray(data.length / 4);
-      
-      for (let i = 0; i < sobelData.length; i++) {
-        mask[i] = sobelData[i] > threshold ? 255 : 0;
-      }
-    }
-    
-    // Apply dilation to connect edges and create a more solid mask
-    // Use fewer iterations in fast mode
-    const iterations = fastMode ? 1 : 2;
-    const dilatedMask = dilate(mask, canvas.width, canvas.height, iterations);
-    
-    // If we only need the mask (for initial processing), return it now
-    if (returnMaskOnly) {
-      return { mask: dilatedMask };
-    }
-    
-    // Step 7: Draw the text onto a separate canvas
-    const textCanvas = document.createElement('canvas');
-    textCanvas.width = canvas.width;
-    textCanvas.height = canvas.height;
-    const textCtx = textCanvas.getContext('2d');
-    
-    if (!textCtx) return { mask: dilatedMask };
-    
-    // Calculate text position based on percentages
-    const textX = (textSettings.x / 100) * canvas.width;
-    const textY = (textSettings.y / 100) * canvas.height;
-    
-    // Draw text
-    textCtx.font = `${textSettings.size}px ${textSettings.font}`;
-    textCtx.fillStyle = textSettings.color;
-    textCtx.textAlign = 'center';
-    textCtx.textBaseline = 'middle';
-    
-    // Handle multi-line text
-    const lines = textSettings.content.split('\n');
-    const lineHeight = textSettings.size * 1.2;
-    
-    lines.forEach((line, index) => {
-      textCtx.fillText(
-        line,
-        textX,
-        textY + (index - lines.length / 2 + 0.5) * lineHeight
-      );
-    });
-    
-    const textImageData = textCtx.getImageData(0, 0, canvas.width, canvas.height);
-    const textData = textImageData.data;
-    
-    // Step 8: Combine original image with text, using the mask to determine what's foreground
-    for (let i = 0; i < data.length; i += 4) {
-      const maskIndex = i / 4;
-      
-      // If this is part of the foreground (based on our dilated mask), 
-      // keep the original image data
-      if (dilatedMask[maskIndex] === 255) {
-        // This pixel is part of foreground, keep original
-        // No change needed as the original image is already drawn
-      } else {
-        // This pixel is background, check if there's text here
-        if (textData[i + 3] > 0) {
-          // There's text at this pixel, draw it
-          data[i] = textData[i];
-          data[i + 1] = textData[i + 1];
-          data[i + 2] = textData[i + 2];
-          data[i + 3] = textData[i + 3];
+    // Get the foreground image with transparent background
+    const foregroundBlob = await removeBackground(image, {
+      // The progress callback in IMG.LY's API expects a function with different parameters
+      // than what TypeScript is inferring. Using the 'any' type to bypass type checking for this callback.
+      progress: (progress: any, ...args: any[]) => {
+        // Ensure progress is treated as a number between 0-1
+        const progressValue = typeof progress === 'number' ? progress : 
+                             (typeof args[0] === 'number' ? args[0] : 0);
+        
+        const progressPercent = Math.round(progressValue * 100);
+        console.log(`Background removal progress: ${progressPercent}%`);
+        if (progressCallback) {
+          progressCallback(progressPercent);
         }
-        // If no text, keep the original background
-      }
+      },
+    });
+
+    console.log(`Background removal completed in ${(performance.now() - processingStartTime) / 1000}s`);
+
+    // Create a URL for the foreground image
+    const foregroundUrl = URL.createObjectURL(foregroundBlob);
+    
+    // Create mask data from the foreground image
+    const maskData = await createMaskFromForeground(foregroundUrl);
+    
+    if (returnMaskOnly) {
+      return { 
+        mask: maskData.mask,
+        foregroundUrl
+      };
     }
     
-    // Draw the final combined image
-    ctx.putImageData(imageData, 0, 0);
+    // If textSettings is provided, handle rendering
+    if (textSettings) {
+      // Text rendering will be handled in the component
+      // This approach keeps this function focused on background removal
+    }
     
-    return { mask: dilatedMask };
+    return { 
+      mask: maskData.mask,
+      foregroundUrl
+    };
   } catch (error) {
     console.error('Error in detectForeground:', error);
     return { mask: new Uint8ClampedArray(0) };
@@ -146,147 +84,44 @@ export function detectForeground(
 }
 
 /**
- * Apply Sobel operator for edge detection
+ * Convert a foreground image with alpha channel to a binary mask
  */
-function applySobelOperator(imageData: ImageData): Uint8ClampedArray {
-  const width = imageData.width;
-  const height = imageData.height;
-  const data = imageData.data;
-  const result = new Uint8ClampedArray(width * height);
-  
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      // Convert to grayscale first
-      const i = (y * width + x) * 4;
-      const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+async function createMaskFromForeground(foregroundUrl: string): Promise<{mask: Uint8ClampedArray}> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      // Create a canvas to process the image
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
       
-      // Apply horizontal and vertical Sobel filters
-      const horizontalGradient = 
-        -1 * getGray(data, (y - 1) * width + (x - 1)) +
-        -2 * getGray(data, (y) * width + (x - 1)) +
-        -1 * getGray(data, (y + 1) * width + (x - 1)) +
-        1 * getGray(data, (y - 1) * width + (x + 1)) +
-        2 * getGray(data, (y) * width + (x + 1)) +
-        1 * getGray(data, (y + 1) * width + (x + 1));
-      
-      const verticalGradient = 
-        -1 * getGray(data, (y - 1) * width + (x - 1)) +
-        -2 * getGray(data, (y - 1) * width + (x)) +
-        -1 * getGray(data, (y - 1) * width + (x + 1)) +
-        1 * getGray(data, (y + 1) * width + (x - 1)) +
-        2 * getGray(data, (y + 1) * width + (x)) +
-        1 * getGray(data, (y + 1) * width + (x + 1));
-      
-      // Calculate gradient magnitude
-      const magnitude = Math.sqrt(horizontalGradient * horizontalGradient + verticalGradient * verticalGradient);
-      
-      // Normalize to 0-255 and set result
-      result[y * width + x] = Math.min(255, magnitude);
-    }
-  }
-  
-  return result;
-}
-
-/**
- * Get grayscale value from RGBA data
- */
-function getGray(data: Uint8ClampedArray, index: number): number {
-  index *= 4;
-  return (data[index] + data[index + 1] + data[index + 2]) / 3;
-}
-
-/**
- * Apply dilation to connect edges and create a more solid mask
- */
-function dilate(data: Uint8ClampedArray, width: number, height: number, iterations: number = 2): Uint8ClampedArray {
-  const result = new Uint8ClampedArray(data);
-  const temp = new Uint8ClampedArray(data);
-  
-  for (let iter = 0; iter < iterations; iter++) {
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        const idx = y * width + x;
-        
-        // Check if any neighbors are foreground (255)
-        const hasWhiteNeighbor = 
-          temp[idx - width - 1] === 255 || // top-left
-          temp[idx - width] === 255 ||     // top
-          temp[idx - width + 1] === 255 || // top-right
-          temp[idx - 1] === 255 ||         // left
-          temp[idx + 1] === 255 ||         // right
-          temp[idx + width - 1] === 255 || // bottom-left
-          temp[idx + width] === 255 ||     // bottom
-          temp[idx + width + 1] === 255;   // bottom-right
-        
-        if (hasWhiteNeighbor) {
-          result[idx] = 255; // Set to foreground
-        }
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        reject(new Error('Could not get canvas context'));
+        return;
       }
-    }
+      
+      // Draw the image to the canvas
+      ctx.drawImage(img, 0, 0);
+      
+      // Extract the alpha channel as a binary mask
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imgData.data;
+      const mask = new Uint8ClampedArray(data.length / 4);
+      
+      // Convert alpha values to binary mask (255 for foreground, 0 for background)
+      for (let i = 0; i < data.length; i += 4) {
+        const alpha = data[i + 3];
+        mask[i / 4] = alpha > 128 ? 255 : 0;
+      }
+      
+      resolve({ mask });
+    };
     
-    // Copy result back to temp buffer for next iteration
-    for (let i = 0; i < temp.length; i++) {
-      temp[i] = result[i];
-    }
-  }
-  
-  return result;
-}
-
-/**
- * Fast edge detection for better performance
- * Uses a simplified algorithm that checks for significant color differences between adjacent pixels
- */
-function fastEdgeDetection(imageData: ImageData): Uint8ClampedArray {
-  const width = imageData.width;
-  const height = imageData.height;
-  const data = imageData.data;
-  const result = new Uint8ClampedArray(width * height);
-  
-  // Process only every other pixel for speed
-  const step = 2;
-  const threshold = 30; // Threshold for detecting edges
-  
-  for (let y = step; y < height - step; y += step) {
-    for (let x = step; x < width - step; x += step) {
-      const idx = (y * width + x) * 4;
-      
-      // Get current pixel color
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-      
-      // Check horizontal difference
-      const rightIdx = (y * width + x + step) * 4;
-      const dr = Math.abs(r - data[rightIdx]);
-      const dg = Math.abs(g - data[rightIdx + 1]);
-      const db = Math.abs(b - data[rightIdx + 2]);
-      
-      // Check vertical difference
-      const downIdx = ((y + step) * width + x) * 4;
-      const dr2 = Math.abs(r - data[downIdx]);
-      const dg2 = Math.abs(g - data[downIdx + 1]);
-      const db2 = Math.abs(b - data[downIdx + 2]);
-      
-      // Calculate total difference
-      const diff = Math.max(dr + dg + db, dr2 + dg2 + db2);
-      
-      // Mark edge if difference exceeds threshold
-      if (diff > threshold) {
-        // Mark this pixel and neighboring pixels
-        const pixelIndex = y * width + x;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const ni = pixelIndex + dy * width + dx;
-            if (ni >= 0 && ni < result.length) {
-              result[ni] = 255;
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  return result;
+    img.onerror = () => {
+      reject(new Error('Failed to load foreground image'));
+    };
+    
+    img.src = foregroundUrl;
+  });
 }

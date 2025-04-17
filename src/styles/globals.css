@@ -3,25 +3,118 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
+  /* Light mode variables - more vibrant colors */
+  --primary: 14, 165, 233;        /* Sky blue - brighter */
+  --secondary: 139, 92, 246;      /* Purple - more vibrant */
+  --accent: 249, 115, 22;         /* Orange */
+  --background: 255, 255, 255;
+  --foreground: 15, 23, 42;
+  --card: 255, 255, 255;
+  --card-foreground: 15, 23, 42;
+  --border: 226, 232, 240;
+  --input: 226, 232, 240;
+  --success: 34, 197, 94;         /* Green */
+  --warning: 245, 158, 11;        /* Yellow - more vibrant */
+  --destructive: 239, 68, 68;     /* Red */
+  --gradient-start: 224, 242, 254; /* Sky blue light */
+  --gradient-end: 236, 254, 255;   /* Cyan extra light */
+  --primary-foreground: 255, 255, 255;
+  --ring: 14, 165, 233;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
+.dark {
+  /* Dark mode variables - more contrast and vibrant accents */
+  --primary: 56, 189, 248;         /* Sky blue - brighter in dark mode */
+  --secondary: 168, 85, 247;      /* Purple - more vibrant in dark mode */
+  --accent: 251, 146, 60;         /* Orange - brighter in dark mode */
+  --background: 15, 23, 42;       /* Slate 900 */
+  --foreground: 248, 250, 252;    /* Slate 50 - higher contrast */
+  --card: 30, 41, 59;             /* Slate 800 */
+  --card-foreground: 248, 250, 252; /* Slate 50 - higher contrast */
+  --border: 71, 85, 105;           /* Slate 600 - more visible borders */
+  --input: 71, 85, 105;            /* Slate 600 */
+  --gradient-start: 15, 23, 42;   /* Slate 900 */
+  --gradient-end: 30, 41, 59;     /* Slate 800 */
+  --primary-foreground: 15, 23, 42;
+  --ring: 56, 189, 248;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply text-foreground bg-background transition-colors duration-300;
+    background-image: radial-gradient(
+      circle at top left,
+      rgba(var(--gradient-start), 0.15),
+      rgba(var(--gradient-end), 0.05)
+    );
+    background-attachment: fixed;
+  }
+
+  /* Improved focus styles for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  
+  /* Headings with gradient text */
+  h1 {
+    @apply text-4xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent;
+  }
+  
+  /* Improved form elements */
+  input, textarea, select {
+    @apply rounded-md border-input bg-background text-foreground focus:ring-2 focus:ring-ring focus:ring-offset-1 focus:ring-offset-background;
   }
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+/* Custom animations */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.animate-pulse-slow {
+  animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom utility classes */
+.glass-effect {
+  @apply backdrop-blur-md bg-background/80 border border-border/50 shadow-lg;
+}
+
+.button-gradient {
+  @apply bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white transition-all font-medium;
+}
+
+.card-hover {
+  @apply transition-all hover:shadow-lg hover:-translate-y-1 duration-300;
+}
+
+/* Improved button styles */
+.btn {
+  @apply px-4 py-2 rounded-md transition-all duration-200 font-medium;
+}
+
+.btn-primary {
+  @apply bg-primary text-primary-foreground hover:bg-primary/90;
+}
+
+.btn-secondary {
+  @apply bg-secondary text-white hover:bg-secondary/90;
+}
+
+.btn-outline {
+  @apply border border-input bg-background hover:bg-accent/10 hover:text-accent;
+}
+
+/* Card styles */
+.card {
+  @apply rounded-lg border border-border bg-card p-4 shadow-sm transition-all;
+}
+
+/* Enhanced input previews */
+.preview-area {
+  @apply p-4 rounded-md bg-card border border-border;
 }

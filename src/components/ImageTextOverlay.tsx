@@ -18,6 +18,7 @@ interface TextSettings {
 
 export default function ImageTextOverlay() {
   const [image, setImage] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [processedImage, setProcessedImage] = useState<string | null>(null);
   const [textSettings, setTextSettings] = useState<TextSettings>({
     content: 'Your custom text here',
@@ -27,10 +28,14 @@ export default function ImageTextOverlay() {
     x: 50,
     y: 50,
   });
+  const [showMask, setShowMask] = useState(false);
+  
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const originalImageRef = useRef<HTMLImageElement | null>(null);
+  const foregroundImageRef = useRef<HTMLImageElement | null>(null);
+  const foregroundUrlRef = useRef<string | null>(null);
   const foregroundMaskRef = useRef<Uint8ClampedArray | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -41,7 +46,7 @@ export default function ImageTextOverlay() {
   const animationFrameRef = useRef<number | null>(null);
   const workerTimeoutRef = useRef<TimeoutRef>(null);
 
-  // Handle image upload with improved error handling
+  // Handle image upload
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -54,6 +59,15 @@ export default function ImageTextOverlay() {
     if (originalImageRef.current) {
       originalImageRef.current = null;
     }
+    
+    if (foregroundUrlRef.current) {
+      URL.revokeObjectURL(foregroundUrlRef.current);
+      foregroundUrlRef.current = null;
+    }
+    
+    if (foregroundImageRef.current) {
+      foregroundImageRef.current = null;
+    }
 
     if (workerTimeoutRef.current) {
       clearTimeout(workerTimeoutRef.current);
@@ -61,6 +75,7 @@ export default function ImageTextOverlay() {
 
     setIsProcessing(true);
     setLoadingProgress(10);
+    setImageFile(file);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -75,16 +90,15 @@ export default function ImageTextOverlay() {
     reader.readAsDataURL(file);
   };
 
-  // Create foreground mask once when image is loaded with enhanced error handling and performance
+  // Process the image with background removal when image is loaded
   useEffect(() => {
-    if (!image) return;
+    if (!image || !imageFile) return;
 
     setIsProcessing(true);
     setLoadingProgress(20);
 
     const img = new Image();
-
-    img.onload = () => {
+    img.onload = async () => {
       // Ensure image has valid dimensions
       if (img.width === 0 || img.height === 0) {
         setIsProcessing(false);
@@ -94,19 +108,41 @@ export default function ImageTextOverlay() {
 
       // Store the original image for reuse
       originalImageRef.current = img;
-      setLoadingProgress(40);
+      setLoadingProgress(30);
 
-      // Use setTimeout to allow UI to update before heavy processing
-      setTimeout(() => {
-        try {
-          // Set up canvas dimensions
+      try {
+        // Process the image with background removal
+        const result = await detectForeground(
+          imageFile, 
+          undefined, 
+          true,
+          (progress) => {
+            // Update progress in UI from 30% to 80%
+            setLoadingProgress(30 + Math.floor(progress * 0.5));
+          }
+        );
+        
+        if (!result.mask || !result.foregroundUrl) {
+          throw new Error('Background removal failed to return valid results');
+        }
+        
+        // Store the foreground mask for later use
+        foregroundMaskRef.current = result.mask;
+        foregroundUrlRef.current = result.foregroundUrl;
+        
+        // Load the foreground image
+        const foregroundImg = new Image();
+        foregroundImg.onload = () => {
+          foregroundImageRef.current = foregroundImg;
+          setLoadingProgress(90);
+          
+          // Set up canvas dimensions based on the image
           if (canvasRef.current && textCanvasRef.current && maskCanvasRef.current) {
-            // Constrain maximum dimensions to improve performance
-            const maxDimension = 1200; // Limit image processing size for performance
+            const maxDimension = 1200;
             let canvasWidth = img.width;
             let canvasHeight = img.height;
 
-            // Resize large images to improve performance while maintaining aspect ratio
+            // Resize large images for better performance
             if (canvasWidth > maxDimension || canvasHeight > maxDimension) {
               if (canvasWidth > canvasHeight) {
                 const ratio = maxDimension / canvasWidth;
@@ -119,69 +155,56 @@ export default function ImageTextOverlay() {
               }
             }
 
-            // Ensure dimensions are at least 1 pixel
             canvasWidth = Math.max(1, canvasWidth);
             canvasHeight = Math.max(1, canvasHeight);
 
             setCanvasSize({ width: canvasWidth, height: canvasHeight });
-            setLoadingProgress(60);
 
-            // Set up main canvas
             canvasRef.current.width = canvasWidth;
             canvasRef.current.height = canvasHeight;
-
-            // Set up text canvas (for rendering text layer only)
             textCanvasRef.current.width = canvasWidth;
             textCanvasRef.current.height = canvasHeight;
-
-            // Set up mask canvas (for storing foreground mask)
             maskCanvasRef.current.width = canvasWidth;
             maskCanvasRef.current.height = canvasHeight;
-
-            // Using a separate timeout for the most intensive part
-            workerTimeoutRef.current = setTimeout(() => {
-              try {
-                // Generate and store foreground mask
-                const maskCtx = maskCanvasRef.current?.getContext('2d', { willReadFrequently: true });
-                if (maskCtx && canvasWidth > 0 && canvasHeight > 0 && maskCanvasRef.current) {
-                  // Draw original image (resized if necessary)
-                  maskCtx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-                  setLoadingProgress(80);
-
-                  // Detect edges and create mask with lower quality for performance
-                  const result = detectForeground(maskCanvasRef.current, img, textSettings, true, true);
-
-                  // Check if result exists and has a mask property
-                  if (result && 'mask' in result) {
-                    // Store the mask for later use
-                    foregroundMaskRef.current = result.mask;
-                    setLoadingProgress(90);
-
-                    // Initial render with brief timeout to allow UI update
-                    setTimeout(() => {
-                      renderCompositeImage();
-                      setIsProcessing(false);
-                      setLoadingProgress(100);
-                    }, 50);
-                  } else {
-                    throw new Error('Invalid result from detectForeground');
-                  }
-                } else {
-                  throw new Error('Invalid canvas context or dimensions');
+            
+            // Display mask if enabled
+            if (showMask && maskCanvasRef.current) {
+              const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
+              if (maskCtx) {
+                // Create a red overlay for the mask
+                const maskImageData = maskCtx.createImageData(canvasWidth, canvasHeight);
+                for (let i = 0; i < result.mask.length; i++) {
+                  const value = result.mask[i];
+                  maskImageData.data[i * 4] = 255;     // Red
+                  maskImageData.data[i * 4 + 1] = 0;   // Green
+                  maskImageData.data[i * 4 + 2] = 0;   // Blue
+                  maskImageData.data[i * 4 + 3] = value; // Alpha (from mask)
                 }
-              } catch (error) {
-                console.error('Error during mask generation:', error);
-                setIsProcessing(false);
-                alert('Error processing image. Please try a different image or smaller file.');
+                maskCtx.putImageData(maskImageData, 0, 0);
               }
-            }, 100); // Brief delay before intensive processing
+            }
+            
+            // Initial render with brief timeout to allow UI update
+            setTimeout(() => {
+              renderCompositeImage();
+              setIsProcessing(false);
+              setLoadingProgress(100);
+            }, 50);
           }
-        } catch (error) {
-          console.error('Error setting up canvases:', error);
+        };
+        
+        foregroundImg.onerror = () => {
+          console.error('Error loading foreground image');
           setIsProcessing(false);
-          alert('Error setting up image processing. Please try again.');
-        }
-      }, 50); // Brief delay to allow UI update
+          alert('Error processing image foreground. Please try again.');
+        };
+        
+        foregroundImg.src = result.foregroundUrl;
+      } catch (error) {
+        console.error('Error during background removal:', error);
+        setIsProcessing(false);
+        alert('Error removing background. Please try a different image.');
+      }
     };
 
     img.onerror = () => {
@@ -200,11 +223,12 @@ export default function ImageTextOverlay() {
         clearTimeout(workerTimeoutRef.current);
       }
     };
-  }, [image]);
+  }, [image, imageFile, showMask]);
 
   // Render the composite image with text behind foreground
   const renderCompositeImage = useCallback(() => {
-    if (!canvasRef.current || !textCanvasRef.current || !originalImageRef.current || !foregroundMaskRef.current) {
+    if (!canvasRef.current || !textCanvasRef.current || !originalImageRef.current || 
+        !foregroundImageRef.current || !foregroundMaskRef.current) {
       return;
     }
 
@@ -222,10 +246,14 @@ export default function ImageTextOverlay() {
     }
 
     try {
-      // Clear the text canvas for rendering new text
+      // Step 1: Clear all canvases
+      mainCtx.clearRect(0, 0, width, height);
       textCtx.clearRect(0, 0, width, height);
 
-      // Draw text on the text canvas
+      // Step 2: Draw the background (original image)
+      mainCtx.drawImage(originalImageRef.current, 0, 0, width, height);
+      
+      // Step 3: Draw text on the text canvas
       textCtx.font = `${textSettings.size}px ${textSettings.font}`;
       textCtx.fillStyle = textSettings.color;
       textCtx.textAlign = 'center';
@@ -246,48 +274,49 @@ export default function ImageTextOverlay() {
           textY + (index - lines.length / 2 + 0.5) * lineHeight
         );
       });
-
-      // Get text image data
+      
+      // Step 4: Get image data for compositing
+      const bgImageData = mainCtx.getImageData(0, 0, width, height);
+      const bgData = bgImageData.data;
+      
       const textImageData = textCtx.getImageData(0, 0, width, height);
       const textData = textImageData.data;
-
-      // Clear main canvas and draw original image (resized if necessary)
-      mainCtx.clearRect(0, 0, width, height);
-      mainCtx.drawImage(originalImageRef.current, 0, 0, width, height);
-
-      // Get the main canvas image data (original image)
-      const mainImageData = mainCtx.getImageData(0, 0, width, height);
-      const mainData = mainImageData.data;
-
-      // Compose final image: text where there's no foreground mask
-      for (let i = 0; i < mainData.length; i += 4) {
+      
+      // Step 5: Composite - place text behind foreground
+      // This approach keeps text only where there's no foreground
+      for (let i = 0; i < bgData.length; i += 4) {
         const maskIndex = i / 4;
-
-        // If this pixel is not part of the foreground mask and there's text
-        if (foregroundMaskRef.current[maskIndex] !== 255 && textData[i + 3] > 0) {
-          // Place text pixel
-          mainData[i] = textData[i];
-          mainData[i + 1] = textData[i + 1];
-          mainData[i + 2] = textData[i + 2];
-          mainData[i + 3] = textData[i + 3];
+        
+        // If this pixel is part of the foreground mask, we'll draw the foreground later
+        if (foregroundMaskRef.current[maskIndex] !== 255) {
+          // This is a background pixel, check if there's text here
+          if (textData[i + 3] > 0) {
+            // Place text pixel
+            bgData[i] = textData[i];
+            bgData[i + 1] = textData[i + 1];
+            bgData[i + 2] = textData[i + 2];
+            bgData[i + 3] = textData[i + 3];
+          }
         }
-        // Otherwise, keep original pixel (foreground)
       }
-
-      // Update main canvas with final composite
-      mainCtx.putImageData(mainImageData, 0, 0);
+      
+      // Update background with text composite
+      mainCtx.putImageData(bgImageData, 0, 0);
+      
+      // Step 6: Draw the foreground with transparency on top
+      mainCtx.drawImage(foregroundImageRef.current, 0, 0, width, height);
 
       // Store processed image for download
       setProcessedImage(canvasRef.current.toDataURL('image/png'));
     } catch (error) {
       console.error('Error during rendering:', error);
-      // Don't block the UI with alerts during interactive operations
     }
   }, [textSettings, canvasSize]);
-
-  // Update image when text settings change with improved throttling for performance
+  
+  // Effect to update image when text settings change
   useEffect(() => {
-    if (!image || isProcessing || canvasSize.width === 0 || canvasSize.height === 0) return;
+    if (!image || isProcessing || canvasSize.width === 0 || canvasSize.height === 0 ||
+        !foregroundImageRef.current) return;
 
     // Cancel any existing animation frame
     if (animationFrameRef.current) {
@@ -296,7 +325,7 @@ export default function ImageTextOverlay() {
 
     // Schedule a new render with debouncing for dragging operations
     if (isDragging) {
-      // Use less frequent updates during dragging for better performance
+      // Less frequent updates during dragging for better performance
       animationFrameRef.current = requestAnimationFrame(() => {
         setTimeout(renderCompositeImage, 50);
       });
@@ -310,23 +339,47 @@ export default function ImageTextOverlay() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [textSettings, renderCompositeImage, isProcessing, image, isDragging, canvasSize]);
+  }, [textSettings, renderCompositeImage, isProcessing, image, isDragging, canvasSize, foregroundImageRef.current]);
+  
+  // Effect to update the mask display when showMask changes
+  useEffect(() => {
+    if (!maskCanvasRef.current || !foregroundMaskRef.current || isProcessing) return;
+    
+    const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
+    if (!maskCtx) return;
+    
+    if (showMask) {
+      const { width, height } = canvasSize;
+      const maskImageData = maskCtx.createImageData(width, height);
+      
+      for (let i = 0; i < foregroundMaskRef.current.length; i++) {
+        const value = foregroundMaskRef.current[i];
+        maskImageData.data[i * 4] = 255;     // Red
+        maskImageData.data[i * 4 + 1] = 0;   // Green
+        maskImageData.data[i * 4 + 2] = 0;   // Blue
+        maskImageData.data[i * 4 + 3] = value * 0.5; // Semi-transparent alpha
+      }
+      
+      maskCtx.putImageData(maskImageData, 0, 0);
+    } else {
+      // Clear the mask canvas when not showing mask
+      maskCtx.clearRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
+    }
+  }, [showMask, foregroundMaskRef.current, canvasSize, isProcessing]);
 
-  // Handle text position dragging with visual feedback
-  const handleMouseDown = (e: React.MouseEvent) => {
+  // Handle text position dragging
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current || isProcessing) return;
     setIsDragging(true);
-
     updateTextPosition(e);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDragging || !canvasRef.current || isProcessing) return;
-
     updateTextPosition(e);
   };
 
-  const updateTextPosition = useCallback((e: React.MouseEvent) => {
+  const updateTextPosition = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasContainerRef.current || !canvasRef.current) return;
 
     const rect = canvasRef.current.getBoundingClientRect();
@@ -357,6 +410,15 @@ export default function ImageTextOverlay() {
     link.download = 'overlay-image.png';
     link.click();
   };
+
+  // Clean up object URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      if (foregroundUrlRef.current) {
+        URL.revokeObjectURL(foregroundUrlRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="flex flex-col md:flex-row gap-8 w-full max-w-7xl mx-auto">
@@ -392,9 +454,11 @@ export default function ImageTextOverlay() {
                 ref={textCanvasRef}
                 className="hidden"
               />
+              
+              {/* Mask overlay canvas */}
               <canvas 
                 ref={maskCanvasRef}
-                className="hidden"
+                className={`absolute top-0 left-0 z-10 ${showMask ? '' : 'hidden'}`}
               />
               
               {/* Main visible canvas */}
@@ -410,7 +474,7 @@ export default function ImageTextOverlay() {
               {/* Overlay to show where text is during dragging */}
               {isDragging && (
                 <div 
-                  className="absolute pointer-events-none z-10"
+                  className="absolute pointer-events-none z-20"
                   style={{
                     left: `${textSettings.x}%`,
                     top: `${textSettings.y}%`,
@@ -461,6 +525,27 @@ export default function ImageTextOverlay() {
           setTextSettings={setTextSettings} 
           disabled={isProcessing}
         />
+        
+        <div className="mt-4 p-4 bg-gray-100 rounded-md">
+          <div className="flex items-center mb-2">
+            <h3 className="text-sm font-medium">Advanced Options</h3>
+          </div>
+          
+          <label className="flex items-center space-x-2 mb-2">
+            <input
+              type="checkbox"
+              checked={showMask}
+              onChange={(e) => setShowMask(e.target.checked)}
+              disabled={isProcessing || !image}
+              className="rounded text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm">Show Foreground Mask</span>
+          </label>
+          
+          <p className="text-xs text-gray-500 mt-2">
+            Powered by IMG.LY Background Removal - processing happens in your browser
+          </p>
+        </div>
       </div>
     </div>
   );
