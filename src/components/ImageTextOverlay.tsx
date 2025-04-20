@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import TextEditor from './TextEditor';
 import { detectForeground } from '../utils/foregroundDetection';
+import { debounce } from 'lodash'; // If lodash is not available, use a simple debounce util
 
 // Update the type definition to avoid the timers module error
 type TimeoutRef = ReturnType<typeof setTimeout> | null;
@@ -29,7 +30,8 @@ export default function ImageTextOverlay() {
     y: 50,
   });
   const [showMask, setShowMask] = useState(false);
-  
+  const [isDragActive, setIsDragActive] = useState(false);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -45,6 +47,7 @@ export default function ImageTextOverlay() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const animationFrameRef = useRef<number | null>(null);
   const workerTimeoutRef = useRef<TimeoutRef>(null);
+  const dragRAF = useRef<number | null>(null);
 
   // Handle image upload
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -59,12 +62,12 @@ export default function ImageTextOverlay() {
     if (originalImageRef.current) {
       originalImageRef.current = null;
     }
-    
+
     if (foregroundUrlRef.current) {
       URL.revokeObjectURL(foregroundUrlRef.current);
       foregroundUrlRef.current = null;
     }
-    
+
     if (foregroundImageRef.current) {
       foregroundImageRef.current = null;
     }
@@ -90,6 +93,29 @@ export default function ImageTextOverlay() {
     reader.readAsDataURL(file);
   };
 
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      handleImageUpload({ target: { files: [file] } } as any);
+    }
+  };
+
   // Process the image with background removal when image is loaded
   useEffect(() => {
     if (!image || !imageFile) return;
@@ -113,29 +139,29 @@ export default function ImageTextOverlay() {
       try {
         // Process the image with background removal
         const result = await detectForeground(
-          imageFile, 
-          undefined, 
+          imageFile,
+          undefined,
           true,
           (progress) => {
             // Update progress in UI from 30% to 80%
             setLoadingProgress(30 + Math.floor(progress * 0.5));
           }
         );
-        
+
         if (!result.mask || !result.foregroundUrl) {
           throw new Error('Background removal failed to return valid results');
         }
-        
+
         // Store the foreground mask for later use
         foregroundMaskRef.current = result.mask;
         foregroundUrlRef.current = result.foregroundUrl;
-        
+
         // Load the foreground image
         const foregroundImg = new Image();
         foregroundImg.onload = () => {
           foregroundImageRef.current = foregroundImg;
           setLoadingProgress(90);
-          
+
           // Set up canvas dimensions based on the image
           if (canvasRef.current && textCanvasRef.current && maskCanvasRef.current) {
             const maxDimension = 1200;
@@ -166,7 +192,7 @@ export default function ImageTextOverlay() {
             textCanvasRef.current.height = canvasHeight;
             maskCanvasRef.current.width = canvasWidth;
             maskCanvasRef.current.height = canvasHeight;
-            
+
             // Display mask if enabled
             if (showMask && maskCanvasRef.current) {
               const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
@@ -175,15 +201,15 @@ export default function ImageTextOverlay() {
                 const maskImageData = maskCtx.createImageData(canvasWidth, canvasHeight);
                 for (let i = 0; i < result.mask.length; i++) {
                   const value = result.mask[i];
-                  maskImageData.data[i * 4] = 255;     // Red
-                  maskImageData.data[i * 4 + 1] = 0;   // Green
-                  maskImageData.data[i * 4 + 2] = 0;   // Blue
+                  maskImageData.data[i * 4] = 255; // Red
+                  maskImageData.data[i * 4 + 1] = 0; // Green
+                  maskImageData.data[i * 4 + 2] = 0; // Blue
                   maskImageData.data[i * 4 + 3] = value; // Alpha (from mask)
                 }
                 maskCtx.putImageData(maskImageData, 0, 0);
               }
             }
-            
+
             // Initial render with brief timeout to allow UI update
             setTimeout(() => {
               renderCompositeImage();
@@ -192,13 +218,13 @@ export default function ImageTextOverlay() {
             }, 50);
           }
         };
-        
+
         foregroundImg.onerror = () => {
           console.error('Error loading foreground image');
           setIsProcessing(false);
           alert('Error processing image foreground. Please try again.');
         };
-        
+
         foregroundImg.src = result.foregroundUrl;
       } catch (error) {
         console.error('Error during background removal:', error);
@@ -227,8 +253,13 @@ export default function ImageTextOverlay() {
 
   // Render the composite image with text behind foreground
   const renderCompositeImage = useCallback(() => {
-    if (!canvasRef.current || !textCanvasRef.current || !originalImageRef.current || 
-        !foregroundImageRef.current || !foregroundMaskRef.current) {
+    if (
+      !canvasRef.current ||
+      !textCanvasRef.current ||
+      !originalImageRef.current ||
+      !foregroundImageRef.current ||
+      !foregroundMaskRef.current
+    ) {
       return;
     }
 
@@ -252,7 +283,7 @@ export default function ImageTextOverlay() {
 
       // Step 2: Draw the background (original image)
       mainCtx.drawImage(originalImageRef.current, 0, 0, width, height);
-      
+
       // Step 3: Draw text on the text canvas
       textCtx.font = `${textSettings.size}px ${textSettings.font}`;
       textCtx.fillStyle = textSettings.color;
@@ -274,19 +305,19 @@ export default function ImageTextOverlay() {
           textY + (index - lines.length / 2 + 0.5) * lineHeight
         );
       });
-      
+
       // Step 4: Get image data for compositing
       const bgImageData = mainCtx.getImageData(0, 0, width, height);
       const bgData = bgImageData.data;
-      
+
       const textImageData = textCtx.getImageData(0, 0, width, height);
       const textData = textImageData.data;
-      
+
       // Step 5: Composite - place text behind foreground
       // This approach keeps text only where there's no foreground
       for (let i = 0; i < bgData.length; i += 4) {
         const maskIndex = i / 4;
-        
+
         // If this pixel is part of the foreground mask, we'll draw the foreground later
         if (foregroundMaskRef.current[maskIndex] !== 255) {
           // This is a background pixel, check if there's text here
@@ -299,10 +330,10 @@ export default function ImageTextOverlay() {
           }
         }
       }
-      
+
       // Update background with text composite
       mainCtx.putImageData(bgImageData, 0, 0);
-      
+
       // Step 6: Draw the foreground with transparency on top
       mainCtx.drawImage(foregroundImageRef.current, 0, 0, width, height);
 
@@ -312,11 +343,17 @@ export default function ImageTextOverlay() {
       console.error('Error during rendering:', error);
     }
   }, [textSettings, canvasSize]);
-  
+
   // Effect to update image when text settings change
   useEffect(() => {
-    if (!image || isProcessing || canvasSize.width === 0 || canvasSize.height === 0 ||
-        !foregroundImageRef.current) return;
+    if (
+      !image ||
+      isProcessing ||
+      canvasSize.width === 0 ||
+      canvasSize.height === 0 ||
+      !foregroundImageRef.current
+    )
+      return;
 
     // Cancel any existing animation frame
     if (animationFrameRef.current) {
@@ -339,27 +376,35 @@ export default function ImageTextOverlay() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [textSettings, renderCompositeImage, isProcessing, image, isDragging, canvasSize, foregroundImageRef.current]);
-  
+  }, [
+    textSettings,
+    renderCompositeImage,
+    isProcessing,
+    image,
+    isDragging,
+    canvasSize,
+    foregroundImageRef.current,
+  ]);
+
   // Effect to update the mask display when showMask changes
   useEffect(() => {
     if (!maskCanvasRef.current || !foregroundMaskRef.current || isProcessing) return;
-    
+
     const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
     if (!maskCtx) return;
-    
+
     if (showMask) {
       const { width, height } = canvasSize;
       const maskImageData = maskCtx.createImageData(width, height);
-      
+
       for (let i = 0; i < foregroundMaskRef.current.length; i++) {
         const value = foregroundMaskRef.current[i];
-        maskImageData.data[i * 4] = 255;     // Red
-        maskImageData.data[i * 4 + 1] = 0;   // Green
-        maskImageData.data[i * 4 + 2] = 0;   // Blue
+        maskImageData.data[i * 4] = 255; // Red
+        maskImageData.data[i * 4 + 1] = 0; // Green
+        maskImageData.data[i * 4 + 2] = 0; // Blue
         maskImageData.data[i * 4 + 3] = value * 0.5; // Semi-transparent alpha
       }
-      
+
       maskCtx.putImageData(maskImageData, 0, 0);
     } else {
       // Clear the mask canvas when not showing mask
@@ -372,11 +417,19 @@ export default function ImageTextOverlay() {
     if (!canvasRef.current || isProcessing) return;
     setIsDragging(true);
     updateTextPosition(e);
+    document.body.style.cursor = 'grabbing';
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDragging || !canvasRef.current || isProcessing) return;
-    updateTextPosition(e);
+    if (dragRAF.current) cancelAnimationFrame(dragRAF.current);
+    dragRAF.current = requestAnimationFrame(() => updateTextPosition(e));
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    document.body.style.cursor = '';
+    if (dragRAF.current) cancelAnimationFrame(dragRAF.current);
   };
 
   const updateTextPosition = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -390,16 +443,12 @@ export default function ImageTextOverlay() {
     const boundedX = Math.max(0, Math.min(100, x));
     const boundedY = Math.max(0, Math.min(100, y));
 
-    setTextSettings(prev => ({
+    setTextSettings((prev) => ({
       ...prev,
       x: boundedX,
-      y: boundedY
+      y: boundedY,
     }));
   }, []);
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
 
   // Handle download of final image
   const handleDownload = () => {
@@ -423,57 +472,49 @@ export default function ImageTextOverlay() {
   return (
     <div className="flex flex-col md:flex-row gap-8 w-full max-w-7xl mx-auto">
       <div className="flex-1">
-        <div className="mb-4">
-          <label className="block text-sm font-medium mb-2">Upload Image</label>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-            disabled={isProcessing}
-          />
-        </div>
-
-        <div ref={canvasContainerRef} className="relative border-2 border-dashed border-gray-300 rounded-lg overflow-hidden bg-gray-50 h-[400px] flex items-center justify-center">
-          {isProcessing && (
-            <div className="absolute inset-0 bg-black bg-opacity-60 flex flex-col items-center justify-center z-20">
-              <div className="text-white font-medium mb-2">Processing image... {loadingProgress}%</div>
-              <div className="w-64 h-2 bg-gray-700 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-blue-500 transition-all duration-300 ease-out" 
-                  style={{ width: `${loadingProgress}%` }}
-                ></div>
-              </div>
+        <div
+          ref={canvasContainerRef}
+          className={`relative border-2 border-dashed border-gray-300 rounded-lg overflow-hidden bg-gray-50 h-[400px] flex items-center justify-center transition-all duration-200 ${
+            isDragActive ? 'ring-4 ring-primary/60 bg-primary/10' : ''
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {isDragActive && (
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-primary/30 bg-blur-lg pointer-events-none">
+              <span className="text-2xl font-bold text-primary drop-shadow">
+                Drop your image here
+              </span>
             </div>
           )}
-          
+
           {image ? (
             <>
               {/* Hidden canvases for processing */}
-              <canvas 
-                ref={textCanvasRef}
-                className="hidden"
-              />
-              
+              <canvas ref={textCanvasRef} className="hidden" />
+
               {/* Mask overlay canvas */}
-              <canvas 
+              <canvas
                 ref={maskCanvasRef}
                 className={`absolute top-0 left-0 z-10 ${showMask ? '' : 'hidden'}`}
               />
-              
+
               {/* Main visible canvas */}
               <canvas
                 ref={canvasRef}
-                className="max-w-full max-h-full object-contain cursor-move relative z-0"
+                className={`max-w-full max-h-full object-contain relative z-0 ${
+                  isDragging ? 'cursor-grabbing' : 'cursor-move'
+                }`}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
               />
-              
+
               {/* Overlay to show where text is during dragging */}
               {isDragging && (
-                <div 
+                <div
                   className="absolute pointer-events-none z-20"
                   style={{
                     left: `${textSettings.x}%`,
@@ -484,15 +525,30 @@ export default function ImageTextOverlay() {
                     backgroundColor: 'rgba(255, 255, 255, 0.5)',
                     border: '2px solid white',
                     borderRadius: '50%',
-                    boxShadow: '0 0 0 1px rgba(0,0,0,0.3)'
+                    boxShadow: '0 0 0 1px rgba(0,0,0,0.3)',
                   }}
                 />
               )}
             </>
           ) : (
-            <div className="text-center p-6">
-              <p className="text-gray-500">Upload an image to get started</p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+              <span className="text-lg font-semibold text-gray-400">
+                Drag & drop an image here
+              </span>
+              <span className="text-xs text-gray-400 mt-2">or click to select</span>
             </div>
+          )}
+
+          {/* Optional: Click to select fallback */}
+          {!image && !isProcessing && (
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="absolute inset-0 opacity-0 cursor-pointer z-20"
+              tabIndex={0}
+              aria-label="Upload image"
+            />
           )}
         </div>
 
@@ -506,7 +562,7 @@ export default function ImageTextOverlay() {
               )}
             </div>
           )}
-          
+
           {processedImage && (
             <button
               onClick={handleDownload}
@@ -520,17 +576,17 @@ export default function ImageTextOverlay() {
       </div>
 
       <div className="flex-1">
-        <TextEditor 
-          textSettings={textSettings} 
-          setTextSettings={setTextSettings} 
+        <TextEditor
+          textSettings={textSettings}
+          setTextSettings={setTextSettings}
           disabled={isProcessing}
         />
-        
+
         <div className="mt-4 p-4 bg-gray-100 rounded-md">
           <div className="flex items-center mb-2">
             <h3 className="text-sm font-medium">Advanced Options</h3>
           </div>
-          
+
           <label className="flex items-center space-x-2 mb-2">
             <input
               type="checkbox"
@@ -541,7 +597,7 @@ export default function ImageTextOverlay() {
             />
             <span className="text-sm">Show Foreground Mask</span>
           </label>
-          
+
           <p className="text-xs text-gray-500 mt-2">
             Powered by IMG.LY Background Removal - processing happens in your browser
           </p>

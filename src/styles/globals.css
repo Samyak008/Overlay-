@@ -20,6 +20,7 @@
   --gradient-end: 236, 254, 255;   /* Cyan extra light */
   --primary-foreground: 255, 255, 255;
   --ring: 14, 165, 233;
+  --radius: 1rem;
 }
 
 .dark {
@@ -44,7 +45,7 @@
     @apply border-border;
   }
   body {
-    @apply text-foreground bg-background transition-colors duration-300;
+    @apply text-foreground bg-background transition-colors duration-300 bg-gradient-to-br from-primary/10 to-secondary/10 min-h-screen;
     background-image: radial-gradient(
       circle at top left,
       rgba(var(--gradient-start), 0.15),
@@ -65,7 +66,7 @@
   
   /* Improved form elements */
   input, textarea, select {
-    @apply rounded-md border-input bg-background text-foreground focus:ring-2 focus:ring-ring focus:ring-offset-1 focus:ring-offset-background;
+    @apply rounded-lg border border-input bg-background text-foreground focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-all duration-200;
   }
 }
 
@@ -94,11 +95,11 @@
 
 /* Improved button styles */
 .btn {
-  @apply px-4 py-2 rounded-md transition-all duration-200 font-medium;
+  @apply px-5 py-2 rounded-lg font-semibold transition-all duration-200 shadow-md;
 }
 
 .btn-primary {
-  @apply bg-primary text-primary-foreground hover:bg-primary/90;
+  @apply bg-gradient-to-r from-primary to-secondary text-white hover:from-primary/80 hover:to-secondary/80;
 }
 
 .btn-secondary {
@@ -111,10 +112,19 @@
 
 /* Card styles */
 .card {
-  @apply rounded-lg border border-border bg-card p-4 shadow-sm transition-all;
+  @apply rounded-2xl shadow-xl border border-border bg-card/80 backdrop-blur-lg p-6 transition-all duration-300;
 }
 
 /* Enhanced input previews */
 .preview-area {
   @apply p-4 rounded-md bg-card border border-border;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100,100,100,0.1);
+  border-radius: 4px;
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { debounce } from 'lodash';
 
 interface TextSettings {
   content: string;
@@ -28,6 +29,20 @@ const FONT_OPTIONS = [
   'Garamond',
   'Comic Sans MS',
   'Impact',
+  'copperplate gothic light',
+  'Lucida Console',
+  'Consolas',
+  'monaco',
+  'monospace',
+  'sans-serif',
+  'system-ui',
+  'cursive',
+  'fantasy',
+  'monospace',
+  'ui-monospace',
+  'ui-rounded',
+  'ui-sans-serif',
+  'ui-serif',
 ];
 
 export default function TextEditor({ textSettings, setTextSettings, disabled = false }: TextEditorProps) {
@@ -67,21 +82,24 @@ export default function TextEditor({ textSettings, setTextSettings, disabled = f
     }));
   };
 
-  // Handle position change
+  // Debounce position update
+  const debouncedSetPosition = useRef(
+    debounce((axis: 'x' | 'y', value: number) => {
+      setTextSettings(prev => ({ ...prev, [axis]: value }));
+    }, 16) // ~60fps
+  ).current;
+
   const handlePositionChange = (axis: 'x' | 'y', value: number) => {
     if (disabled) return;
-    setTextSettings(prev => ({
-      ...prev,
-      [axis]: value
-    }));
+    debouncedSetPosition(axis, value);
   };
 
   return (
-    <div className={`bg-white p-6 rounded-lg border border-gray-200 shadow-sm ${disabled ? 'opacity-75' : ''}`}>
+    <div className={`card ${disabled ? 'opacity-75' : ''}`}>
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Text Settings</h2>
+        <h2 className="text-xl font-semibold text-foreground">Text Settings</h2>
         {disabled && (
-          <span className="text-xs bg-gray-200 text-gray-700 py-1 px-2 rounded-full">
+          <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 py-1 px-2 rounded-full">
             Processing...
           </span>
         )}
@@ -173,6 +191,11 @@ export default function TextEditor({ textSettings, setTextSettings, disabled = f
                 className={`w-full h-2 bg-gray-200 rounded-lg appearance-none ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
                 disabled={disabled}
               />
+              <div className="relative w-full">
+                <span className="absolute left-1/2 -translate-x-1/2 -top-6 bg-gray-700 text-white text-xs px-2 py-1 rounded shadow">
+                  {Math.round(textSettings.x)}%
+                </span>
+              </div>
             </div>
             <div>
               <label htmlFor="position-y" className="block text-sm text-gray-600 mb-1">
@@ -188,6 +211,11 @@ export default function TextEditor({ textSettings, setTextSettings, disabled = f
                 className={`w-full h-2 bg-gray-200 rounded-lg appearance-none ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
                 disabled={disabled}
               />
+              <div className="relative w-full">
+                <span className="absolute left-1/2 -translate-x-1/2 -top-6 bg-gray-700 text-white text-xs px-2 py-1 rounded shadow">
+                  {Math.round(textSettings.y)}%
+                </span>
+              </div>
             </div>
           </div>
         </div>
